@@ -2,53 +2,128 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1, viewport-fit=cover"
+  />
   <title>Expense Analyzer (Gmail)</title>
-  <link rel="stylesheet" href="style.css" />
-  <!-- Google Identity Services for OAuth -->
-  <script src="https://accounts.google.com/gsi/client" async defer></script>
+
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
+
+  <!-- Chart.js for pretty charts -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1"></script>
+
+  <!-- SheetJS for Excel import -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+
+  <link rel="stylesheet" href="style.css?v=2">
 </head>
 <body>
-  <header>
-    <h1>Expense Analyzer (Gmail)</h1>
+  <header class="appbar">
+    <h1>Expense Analyzer <span class="muted">(Gmail + CSV/XLSX)</span></h1>
     <div class="actions">
-      <button id="connectBtn">Connect Gmail</button>
-      <button id="scanBtn" disabled>Scan Gmail</button>
-      <button id="exportCsvBtn" disabled>Export CSV</button>
-      <button id="backupBtn" disabled>Export Backup</button>
+      <button id="connectBtn" class="btn">Connect Gmail</button>
+      <button id="scanBtn" class="btn" disabled>Scan Gmail</button>
+      <button id="exportCsvBtn" class="btn" disabled>Export CSV</button>
+      <button id="backupBtn" class="btn" disabled>Export Backup</button>
+
+      <label class="file-btn">
+        <input id="fileInput" type="file" accept=".csv,.xlsx,.xls" />
+        Import CSV/XLSX
+      </label>
     </div>
   </header>
 
-  <section class="grid">
-    <div class="card">
-      <h3>Total Expenses</h3>
-      <div id="totalAmt">—</div>
-      <div id="txCount">— transactions</div>
-    </div>
-    <div class="card">
-      <h3>By Card</h3>
-      <div id="byCard">—</div>
-    </div>
-    <div class="card">
-      <h3>Upcoming Bills</h3>
-      <div id="upcoming">—</div>
+  <!-- Filters -->
+  <section class="card filters">
+    <div class="row">
+      <div>
+        <label>From</label>
+        <input type="date" id="fromDate">
+      </div>
+      <div>
+        <label>To</label>
+        <input type="date" id="toDate">
+      </div>
+      <div>
+        <label>Type</label>
+        <select id="typeFilter">
+          <option value="all">All</option>
+          <option value="debit">Debits (spend)</option>
+          <option value="credit">Credits (refunds)</option>
+        </select>
+      </div>
+      <div class="grow"></div>
+      <button id="applyFilterBtn" class="btn">Apply Filters</button>
+      <button id="clearFilterBtn" class="btn ghost">Clear</button>
     </div>
   </section>
 
+  <!-- KPI cards -->
+  <section class="grid kpis">
+    <div class="card kpi">
+      <div class="kpi-title">Total Expenses</div>
+      <div id="totalAmt" class="kpi-value">₹ 0.00</div>
+      <div id="txCount" class="kpi-sub">0 transactions</div>
+    </div>
+
+    <div class="card kpi">
+      <div class="kpi-title">By Card</div>
+      <div id="byCard" class="mono small">—</div>
+    </div>
+
+    <div class="card kpi">
+      <div class="kpi-title">Upcoming Bills</div>
+      <div id="upcoming" class="small">No obvious upcoming bills found</div>
+    </div>
+
+    <div class="card kpi">
+      <div class="kpi-title">Top Merchants</div>
+      <div id="topMerchants" class="small">—</div>
+    </div>
+  </section>
+
+  <!-- Charts -->
+  <section class="grid charts">
+    <div class="card">
+      <div class="card-title">Monthly Spend (last 12 months)</div>
+      <canvas id="barMonthly" height="140"></canvas>
+    </div>
+    <div class="card">
+      <div class="card-title">Spend by Card</div>
+      <canvas id="pieByCard" height="140"></canvas>
+    </div>
+    <div class="card">
+      <div class="card-title">Cumulative Spend</div>
+      <canvas id="lineCumulative" height="140"></canvas>
+    </div>
+  </section>
+
+  <!-- Table -->
   <section class="card">
-    <h3>Transactions (latest 200 scanned)</h3>
-    <table id="txTable">
-      <thead><tr><th>Date</th><th>Amount</th><th>Merchant</th><th>Card</th><th>Source</th></tr></thead>
-      <tbody></tbody>
-    </table>
+    <div class="card-title">Transactions (latest 200 scanned)</div>
+    <div class="table-wrap">
+      <table id="txTable">
+        <thead>
+          <tr>
+            <th>Date</th><th>Amount</th><th>Merchant</th><th>Card</th><th>Source</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
   </section>
 
+  <!-- Notes / Logs -->
   <section class="card">
-    <h3>Notes & Logs</h3>
-    <p>After scanning, click any upcoming bill to download calendar reminders (.ics) for 7/3/2/0 days before due.</p>
-    <pre id="log"></pre>
+    <div class="card-title">Notes & Logs</div>
+    <pre id="log" class="log"></pre>
   </section>
 
-  <script src="script.js?v=2" type="module"></script>
+  <!-- Google Identity (OAuth) -->
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+  <script src="script.js?v=3" type="module"></script>
 </body>
 </html>
