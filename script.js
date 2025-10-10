@@ -1,6 +1,5 @@
-// Expense Analyzer front-end (client-only).
-// Origin that must be authorized in Google Cloud: https://vijaysslp.github.io
-// OAuth scope is read-only for Gmail.
+// Expense Analyzer front-end (client-only) — v2
+// Logs "SCRIPT VERSION v2" on load so you know the new file is active.
 
 const CLIENT_ID = "263109576837-3iphn0jaf34739hdltpoaeccjlmf1p4j.apps.googleusercontent.com";
 const SCOPES = "https://www.googleapis.com/auth/gmail.readonly";
@@ -14,17 +13,15 @@ const exportCsvBtn = document.getElementById("exportCsvBtn");
 const backupBtn = document.getElementById("backupBtn");
 const logEl = document.getElementById("log");
 
-const state = {
-  transactions: [], // {amount, amountPaise, merchant, date, card, messageId, snippet, raw, source}
-};
+const state = { transactions: [] };
 
 function log(s){
   console.log(s);
   if (logEl) logEl.textContent = (new Date()).toISOString()+" — "+s+"\n"+logEl.textContent;
 }
 
-// Initialize Google Identity Services
 window.addEventListener("load", () => {
+  log("SCRIPT VERSION v2");
   tokenClient = google.accounts.oauth2.initTokenClient({
     client_id: CLIENT_ID,
     scope: SCOPES,
@@ -38,19 +35,16 @@ window.addEventListener("load", () => {
     }
   });
 
-  connectBtn.addEventListener("click", () => {
-    tokenClient.requestAccessToken();
-  });
-
+  connectBtn.addEventListener("click", () => tokenClient.requestAccessToken());
   scanBtn.addEventListener("click", scanGmail);
   exportCsvBtn.addEventListener("click", exportCsv);
   backupBtn.addEventListener("click", exportBackup);
 });
 
+// Gmail fetch helper — skips null/undefined/empty params
 async function gmailFetch(path, params = {}) {
   if (!accessToken) throw new Error("No access token yet");
   const url = new URL(`https://gmail.googleapis.com/gmail/v1/${path}`);
-  // ✅ Only include non-empty params (fixes Invalid pageToken)
   Object.entries(params).forEach(([k, v]) => {
     if (v !== undefined && v !== null && v !== "") url.searchParams.set(k, v);
   });
@@ -73,7 +67,9 @@ async function scanGmail(){
 
     do {
       const params = { q, maxResults: 100 };
-      if (nextPageToken) params.pageToken = nextPageToken; // only when truthy
+      if (typeof nextPageToken === "string" && nextPageToken.length > 0) {
+        params.pageToken = nextPageToken; // only set when valid
+      }
       const list = await gmailFetch("users/me/messages", params);
 
       nextPageToken = list.nextPageToken; // undefined when none
@@ -84,7 +80,7 @@ async function scanGmail(){
         await processMessage(full);
         processed++;
       }
-    } while (nextPageToken && processed < limit);
+    } while (typeof nextPageToken === "string" && nextPageToken.length > 0 && processed < limit);
 
     log(`Scan complete. Processed: ${processed}, Transactions: ${state.transactions.length}`);
     renderDashboard();
@@ -102,10 +98,7 @@ function getMessageBody(message) {
         if (p.mimeType === "text/html"  && p.body?.data) return stripHtml(decodeBase64Url(p.body.data));
       }
     }
-    if (message.payload?.body?.data) {
-      // Some messages have body directly without parts
-      return stripHtml(decodeBase64Url(message.payload.body.data));
-    }
+    if (message.payload?.body?.data) return stripHtml(decodeBase64Url(message.payload.body.data));
     if (message.snippet) return message.snippet;
   } catch {}
   return "";
@@ -179,12 +172,10 @@ function detectCardFromHeaders(headers) {
 }
 
 function renderDashboard() {
-  // totals
   const total = state.transactions.reduce((s,t)=>s+(t.amount||0),0);
   document.getElementById("totalAmt").textContent = `₹ ${total.toFixed(2)}`;
   document.getElementById("txCount").textContent = `${state.transactions.length} transactions`;
 
-  // by card
   const byCardAgg = {};
   state.transactions.forEach(t => {
     const k = t.card || "Unknown";
@@ -196,7 +187,6 @@ function renderDashboard() {
     .map(([k,v])=>`<div>${escapeHtml(k)}: ${v.count} tx • ₹${v.sum.toFixed(2)}</div>`)
     .join('') || "—";
 
-  // upcoming (heuristic)
   const upcoming = state.transactions.filter(t => /due|statement|minimum due|payment due/i.test(t.raw||t.snippet||''));
   const upcomingEl = document.getElementById("upcoming");
   upcomingEl.innerHTML = upcoming.length ? upcoming.slice(0,6).map(u=>{
@@ -204,7 +194,6 @@ function renderDashboard() {
     return `<div style="cursor:pointer" onclick="createIcs(${u.date}, ${u.amountPaise}, '${escapeHtml(u.merchant||'Unknown')}')">• ${escapeHtml(u.merchant||'Unknown')} — ₹${u.amount.toFixed(2)} — ${d.toLocaleDateString()}</div>`;
   }).join('') : "No obvious upcoming bills found";
 
-  // table
   const tbody = document.querySelector("#txTable tbody");
   tbody.innerHTML = state.transactions.map(t=>`<tr>
     <td>${new Date(t.date).toLocaleString()}</td>
