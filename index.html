@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Expense Analyzer (Gmail)</title>
+  <link rel="stylesheet" href="style.css" />
+  <!-- Google Identity Services for OAuth -->
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+</head>
+<body>
+  <header>
+    <h1>Expense Analyzer (Gmail)</h1>
+    <div class="actions">
+      <button id="connectBtn">Connect Gmail</button>
+      <button id="scanBtn" disabled>Scan Gmail</button>
+      <button id="exportCsvBtn" disabled>Export CSV</button>
+      <button id="backupBtn" disabled>Export Backup</button>
+    </div>
+  </header>
+
+  <section class="grid">
+    <div class="card">
+      <h3>Total Expenses</h3>
+      <div id="totalAmt">—</div>
+      <div id="txCount">— transactions</div>
+    </div>
+    <div class="card">
+      <h3>By Card</h3>
+      <div id="byCard">—</div>
+    </div>
+    <div class="card">
+      <h3>Upcoming Bills</h3>
+      <div id="upcoming">—</div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h3>Transactions (latest 200 scanned)</h3>
+    <table id="txTable">
+      <thead><tr><th>Date</th><th>Amount</th><th>Merchant</th><th>Card</th><th>Source</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </section>
+
+  <section class="card">
+    <h3>Notes & Logs</h3>
+    <p>After scanning, click any upcoming bill to download calendar reminders (.ics) for 7/3/2/0 days before due.</p>
+    <pre id="log"></pre>
+  </section>
+
+  <script src="script.js" type="module"></script>
+</body>
+</html>
