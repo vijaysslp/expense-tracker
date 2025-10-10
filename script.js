@@ -1,6 +1,6 @@
 // Expense Analyzer front-end (client-only).
-// IMPORTANT: replace CLIENT_ID below with your Google OAuth Client ID if different.
-// Repo origin that must be authorized in Google Cloud: https://vijaysslp.github.io
+// Origin that must be authorized in Google Cloud: https://vijaysslp.github.io
+// OAuth scope is read-only for Gmail.
 
 const CLIENT_ID = "263109576837-3iphn0jaf34739hdltpoaeccjlmf1p4j.apps.googleusercontent.com";
 const SCOPES = "https://www.googleapis.com/auth/gmail.readonly";
@@ -18,7 +18,10 @@ const state = {
   transactions: [], // {amount, amountPaise, merchant, date, card, messageId, snippet, raw, source}
 };
 
-function log(s){ console.log(s); logEl.textContent = (new Date()).toISOString()+" — "+s+"\n"+logEl.textContent }
+function log(s){
+  console.log(s);
+  if (logEl) logEl.textContent = (new Date()).toISOString()+" — "+s+"\n"+logEl.textContent;
+}
 
 // Initialize Google Identity Services
 window.addEventListener("load", () => {
@@ -47,7 +50,10 @@ window.addEventListener("load", () => {
 async function gmailFetch(path, params = {}) {
   if (!accessToken) throw new Error("No access token yet");
   const url = new URL(`https://gmail.googleapis.com/gmail/v1/${path}`);
-  Object.entries(params).forEach(([k,v]) => v!==undefined && url.searchParams.set(k, v));
+  // ✅ Only include non-empty params (fixes Invalid pageToken)
+  Object.entries(params).forEach(([k, v]) => {
+    if (v !== undefined && v !== null && v !== "") url.searchParams.set(k, v);
+  });
   log("Gmail fetch: " + url.toString());
   const r = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
   if (!r.ok) throw new Error(`Gmail API error ${r.status}: ${await r.text()}`);
@@ -61,13 +67,16 @@ async function scanGmail(){
   try {
     log("Starting scan… (up to 200 emails for responsiveness)");
     const q = "subject:(receipt OR transaction OR debited OR credited OR payment OR spent) OR from:(@icicibank @hdfcbank @axisbank @sbi @paytm @razorpay)";
-    let nextPageToken = null;
+    let nextPageToken = undefined;   // important: not null
     let processed = 0;
     const limit = 200;
 
     do {
-      const list = await gmailFetch("users/me/messages", { q, maxResults: 100, pageToken: nextPageToken });
-      nextPageToken = list.nextPageToken;
+      const params = { q, maxResults: 100 };
+      if (nextPageToken) params.pageToken = nextPageToken; // only when truthy
+      const list = await gmailFetch("users/me/messages", params);
+
+      nextPageToken = list.nextPageToken; // undefined when none
       const msgs = list.messages || [];
       for (const m of msgs) {
         if (processed >= limit) break;
@@ -90,8 +99,12 @@ function getMessageBody(message) {
     if (message.payload?.parts) {
       for (const p of message.payload.parts) {
         if (p.mimeType === "text/plain" && p.body?.data) return decodeBase64Url(p.body.data);
-        if (p.mimeType === "text/html" && p.body?.data) return stripHtml(decodeBase64Url(p.body.data));
+        if (p.mimeType === "text/html"  && p.body?.data) return stripHtml(decodeBase64Url(p.body.data));
       }
+    }
+    if (message.payload?.body?.data) {
+      // Some messages have body directly without parts
+      return stripHtml(decodeBase64Url(message.payload.body.data));
     }
     if (message.snippet) return message.snippet;
   } catch {}
@@ -114,19 +127,23 @@ function parseTransactionFromText(text) {
   if (!text) return null;
   if (!/(INR|Rs\.?|₹|spent|debited|transaction|payment)/i.test(text)) return null;
 
-  const amtMatch = text.match(/(?:INR|Rs\.?|₹)\s*([0-9,]+(?:\.[0-9]{1,2})?)/i)
-                 || text.match(/([0-9,]+\.[0-9]{2})\s*(?:INR|Rs\.?|₹)?/i);
+  const amtMatch =
+      text.match(/(?:INR|Rs\.?|₹)\s*([0-9,]+(?:\.[0-9]{1,2})?)/i)
+   || text.match(/([0-9,]+\.[0-9]{2})\s*(?:INR|Rs\.?|₹)?/i);
   const amount = amtMatch ? parseFloat(amtMatch[1].replace(/,/g,'')) : null;
 
-  const merchantMatch = text.match(/(?:at|to|via|merchant[:\s])\s*([A-Z0-9 &._-]{2,60})/i)
-                      || text.match(/(?:from|merchant)\s*[:\-]\s*([A-Z0-9 &._-]{2,60})/i);
+  const merchantMatch =
+      text.match(/(?:at|to|via|merchant[:\s])\s*([A-Z0-9 &._-]{2,60})/i)
+   || text.match(/(?:from|merchant)\s*[:\-]\s*([A-Z0-9 &._-]{2,60})/i);
   const merchant = merchantMatch ? merchantMatch[1].trim().replace(/\s+/g,' ') : null;
 
   let card = null;
   const cardMatch = text.match(/(card(?:\s*ending)?\s*[:\s]?(\d{2,4}[-\d]*\d{2,4})|VISA|MASTERCARD|MASTER|AMEX|AMERICAN EXPRESS|DISCOVER|RUPAY|RuPay)/i);
   if (cardMatch) card = (cardMatch[2] || cardMatch[1]).toString();
 
-  const dateMatch = text.match(/(20\d{2}-\d{2}-\d{2})/) || text.match(/(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})/);
+  const dateMatch =
+      text.match(/(20\d{2}-\d{2}-\d{2})/)
+   || text.match(/(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})/);
   const when = dateMatch ? new Date(dateMatch[1]).getTime() : Date.now();
 
   if (!amount) return null;
@@ -162,10 +179,12 @@ function detectCardFromHeaders(headers) {
 }
 
 function renderDashboard() {
+  // totals
   const total = state.transactions.reduce((s,t)=>s+(t.amount||0),0);
   document.getElementById("totalAmt").textContent = `₹ ${total.toFixed(2)}`;
   document.getElementById("txCount").textContent = `${state.transactions.length} transactions`;
 
+  // by card
   const byCardAgg = {};
   state.transactions.forEach(t => {
     const k = t.card || "Unknown";
@@ -173,15 +192,19 @@ function renderDashboard() {
     byCardAgg[k].count++; byCardAgg[k].sum += t.amount;
   });
   const byCardEl = document.getElementById("byCard");
-  byCardEl.innerHTML = Object.entries(byCardAgg).map(([k,v])=>`<div>${escapeHtml(k)}: ${v.count} tx • ₹${v.sum.toFixed(2)}</div>`).join('') || "—";
+  byCardEl.innerHTML = Object.entries(byCardAgg)
+    .map(([k,v])=>`<div>${escapeHtml(k)}: ${v.count} tx • ₹${v.sum.toFixed(2)}</div>`)
+    .join('') || "—";
 
+  // upcoming (heuristic)
   const upcoming = state.transactions.filter(t => /due|statement|minimum due|payment due/i.test(t.raw||t.snippet||''));
   const upcomingEl = document.getElementById("upcoming");
   upcomingEl.innerHTML = upcoming.length ? upcoming.slice(0,6).map(u=>{
     const d = new Date(u.date);
-    return `<div style="cursor:pointer" onclick="createIcs(${u.date}, ${u.amountPaise}, '${escapeHtml(u.merchant||'Unknown')}')">• ${escapeHtml(u.merchant||'Unknown')} — ₹${u.amount.toFixed(2)} — ${d.toLocaleDateString()}</div>`
+    return `<div style="cursor:pointer" onclick="createIcs(${u.date}, ${u.amountPaise}, '${escapeHtml(u.merchant||'Unknown')}')">• ${escapeHtml(u.merchant||'Unknown')} — ₹${u.amount.toFixed(2)} — ${d.toLocaleDateString()}</div>`;
   }).join('') : "No obvious upcoming bills found";
 
+  // table
   const tbody = document.querySelector("#txTable tbody");
   tbody.innerHTML = state.transactions.map(t=>`<tr>
     <td>${new Date(t.date).toLocaleString()}</td>
@@ -192,12 +215,24 @@ function renderDashboard() {
   </tr>`).join('');
 }
 
-function escapeHtml(s){ return (s||'').toString().replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function escapeHtml(s){
+  return (s||'').toString()
+    .replace(/&/g,'&amp;')
+    .replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;');
+}
 
 function exportCsv(){
   if (!state.transactions.length) { alert("No transactions"); return; }
   const rows = [["date","amount","merchant","card","source"]];
-  state.transactions.forEach(t => rows.push([ new Date(t.date).toISOString(), t.amount.toFixed(2), t.merchant||'', t.card||'', t.source ]));
+  state.transactions.forEach(t => rows.push([
+    new Date(t.date).toISOString(),
+    t.amount.toFixed(2),
+    t.merchant||'',
+    t.card||'',
+    t.source
+  ]));
   const csv = rows.map(r=>r.map(c=>`"${(c||'').toString().replace(/"/g,'""')}"`).join(",")).join("\n");
   const blob = new Blob([csv], {type:"text/csv"});
   const url = URL.createObjectURL(blob);
@@ -239,5 +274,5 @@ window.createIcs = (whenMillis, amountPaise, merchantEsc) => {
     const a = document.createElement('a'); a.href=url; a.download=`reminder-${uid}.ics`; a.click();
     URL.revokeObjectURL(url);
   });
-  alert("Downloaded .ics reminders for that bill. Import them to your calendar.");
+  alert("Downloaded .ics reminders. Import them into your calendar.");
 };
