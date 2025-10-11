@@ -14,6 +14,17 @@ const BANKS = ["icicibank","hdfcbank","axisbank","sbi","kotak","idfcfirstbank",
   "sbicard","americanexpress","amex","onecard","citi","billdesk","razorpay",
   "paytm","phonepe","amazon","flipkart"];
 
+// add this new list
+const CARD_SENDERS = [
+  "sbicard.com", "alerts.sbicard.com",
+  "hdfcbank.com", "hdfcbankcards.com",
+  "icicibank.com", "axisbank.com",
+  "kotak.com", "kotakcards.com",
+  "americanexpress.com", "amex.co.in",
+  "rblbank.com", "indusind.com", "yesbank.in"
+];
+
+
 // ---------- DOM HELPERS ----------
 const $  = (s, r=document) => r.querySelector(s);
 const $$ = (s, r=document) => [...r.querySelectorAll(s)];
@@ -283,14 +294,19 @@ function initGsiIfPossible(){
 })();
 
 // ---------- GMAIL SCAN + DEDUPE ----------
-const STOP_PATTERNS=[
-  /otp/i, /one\s*time\s*password/i,
+// was: const STOP_PATTERNS = [ ... "inform you that" ... ]
+const STOP_PATTERNS = [
+  /otp/i,
+  /one\s*time\s*password/i,
   /declined|failed|failure|unsuccessful|not\s*approved/i,
   /reversed|reversal|charge\s*reversal|chargeback/i,
-  /generated mail with reference/i, /inform you that/i,
-  /test\s*transaction/i, /autopay setup|mandate\s*(registered|cancelled)/i,
-  /transaction\s+declined/i, /\bnot\s+processed\b/i
+  /generated mail with reference/i,
+  /test\s*transaction/i,
+  /autopay setup|mandate\s*(registered|cancelled)/i,
+  /transaction\s+declined/i,
+  /\bnot\s+processed\b/i
 ];
+
 const DEDUPE_WINDOW_MS=10*60*1000;
 const processedMsgIds=new Set();
 const fpSeen=new Set(JSON.parse(localStorage.getItem("fpSeen")||"[]"));
@@ -315,32 +331,25 @@ async function gfetch(p,params={}){
 
 $("#btn-scan").addEventListener("click",()=>scanGmail().catch(e=>log("Scan failed: "+(e.message||e))));
 async function scanGmail(){
-  state.tx.length=0; renderAll();
-  const exclude='-subject:(otp OR "one time password" OR declined OR failure OR failed OR reversal OR unsuccessful)';
-  const q=`newer_than:365d ${exclude} (subject:(receipt OR transaction OR debited OR credited OR payment OR spent OR txn) OR from:(${BANKS.map(x=>'@'+x).join(' ')}))`;
-  await scanQuery(q,200);
-  if(state.tx.length===0) log("No results. Try CSV import.");
+  state.tx.length = 0; renderAll();
+
+  const exclude = '-subject:(otp OR "one time password" OR declined OR failure OR failed OR reversal OR unsuccessful)';
+  const base = 'subject:(transaction OR spent OR debited OR credited OR payment OR purchase OR txn)';
+
+  // 1) generic query (banks + gateways)
+  const q1 = `newer_than:365d ${exclude} (${base} OR from:(${BANKS.map(x=>'@'+x).join(' ')}))`;
+  await scanQuery(q1, 200);
+
+  // 2) issuer-specific queries: some issuers only show with strict from:
+  for (const d of CARD_SENDERS) {
+    const q = `newer_than:365d ${exclude} (from:${d} ${base})`;
+    await scanQuery(q, 200);              // dedupe prevents repeats
+  }
+
+  if (state.tx.length === 0) log("No results. Try CSV import or check Gmail search access.");
   renderAll();
 }
-const seenMsgs=new Set();
-async function scanQuery(q,limit){
-  let next, processed=0;
-  try{
-    do{
-      const params={q, maxResults:100}; if(next) params.pageToken=next;
-      const list=await gfetch("users/me/messages",params);
-      next=list.nextPageToken; const msgs=list.messages||[];
-      for(const m of msgs){
-        if(processed>=limit) break;
-        if(seenMsgs.has(m.id)) continue;
-        seenMsgs.add(m.id);
-        const full=await gfetch(`users/me/messages/${m.id}`,{format:"full"});
-        if(processMsg(full)) processed++;
-      }
-    }while(next && processed<limit);
-    log(`Processed ${processed} messages — ${state.tx.length} unique transactions`);
-  }catch(e){ log("Scan failed: "+(e.message||e)); }
-}
+
 
 function hVal(h,n){ return (h||[]).find(x=>x.name?.toLowerCase()===n.toLowerCase())?.value||""; }
 function getBody(m){
@@ -403,40 +412,119 @@ function categorize(t){
   return "Other";
 }
 
+function parseSbiCard(text) {
+  // Example: “Transaction Alert from SBI Card - Rs. 55353.00 spent on your SBI Credit Card ending 3183 at PAYUFLIPKART …”
+  const m = text.match(/(?:SBI\s*Card).*?(?:INR|Rs\.?|₹)\s*([0-9][0-9,]*(?:\.\d{1,2})?).*?(?:spent|debited).*?Credit\s*Card.*?(?:ending|xx|xxxx)\s*([0-9]{3,6}|[0-9]{4}).*?(?:at|towards)\s+([A-Z0-9& ._\-]{2,60})/i);
+  if (!m) return null;
+  return {
+    amount: parseFloat(m[1].replace(/,/g,'')),
+    card: m[2],
+    merchant: m[3].trim(),
+    type: /credited|refund/i.test(text) ? "credit" : "debit"
+  };
+}
+
+function parseHdfcCard(text) {
+  // Example: “Rs.2240.00 is debited from your HDFC Bank Credit Card ending 8675 towards SHYAM FILLING STATION …”
+  const m = text.match(/(?:INR|Rs\.?|₹)\s*([0-9][0-9,]*(?:\.\d{1,2})?).*?(?:is\s+)?(?:debited|spent|credited).*?HDFC.*?Credit\s*Card.*?(?:ending|xx|xxxx)\s*([0-9]{3,6}|[0-9]{4}).*?(?:towards|at)\s+([A-Z0-9& ._\-]{2,60})/i);
+  if (!m) return null;
+  return {
+    amount: parseFloat(m[1].replace(/,/g,'')),
+    card: m[2],
+    merchant: m[3].trim(),
+    type: /credited|refund/i.test(text) ? "credit" : "debit"
+  };
+}
+
+function parseAxisCard(text) {
+  const m = text.match(/(?:INR|Rs\.?|₹)\s*([0-9][0-9,]*(?:\.\d{1,2})?).*?(?:spent|debited|credited).*?Axis.*?Credit\s*Card.*?(?:ending|xx|xxxx)\s*([0-9]{3,6}|[0-9]{4}).*?(?:at|towards)\s+([A-Z0-9& ._\-]{2,60})/i);
+  if (!m) return null;
+  return {
+    amount: parseFloat(m[1].replace(/,/g,'')),
+    card: m[2],
+    merchant: m[3].trim(),
+    type: /credited|refund/i.test(text) ? "credit" : "debit"
+  };
+}
+
+function parseIciciCard(text) {
+  const m = text.match(/(?:INR|Rs\.?|₹)\s*([0-9][0-9,]*(?:\.\d{1,2})?).*?(?:spent|debited|credited).*?ICICI.*?Credit\s*Card.*?(?:ending|xx|xxxx)\s*([0-9]{3,6}|[0-9]{4}).*?(?:at|towards)\s+([A-Z0-9& ._\-]{2,60})/i);
+  if (!m) return null;
+  return {
+    amount: parseFloat(m[1].replace(/,/g,'')),
+    card: m[2],
+    merchant: m[3].trim(),
+    type: /credited|refund/i.test(text) ? "credit" : "debit"
+  };
+}
+
+function parseCardAlert(text) {
+  // try issuer-specific templates first
+  return (
+    parseSbiCard(text)   ||
+    parseHdfcCard(text)  ||
+    parseAxisCard(text)  ||
+    parseIciciCard(text) ||
+    null
+  );
+}
+
 function processMsg(msg){
   if(processedMsgIds.has(msg.id)) return false;
   processedMsgIds.add(msg.id);
 
-  const h=msg.payload?.headers||[];
-  const from=hVal(h,"From");
-  const subject=hVal(h,"Subject")||"";
-  const date=new Date(hVal(h,"Date")).getTime()||Date.now();
-  const body=getBody(msg);
-  const text=(subject+"\n"+body).replace(/\s+/g,' ');
+  const h = msg.payload?.headers || [];
+  const from = hVal(h,"From");
+  const subject = hVal(h,"Subject") || "";
+  const date = new Date(hVal(h,"Date")).getTime() || Date.now();
+  const body = getBody(msg);
+  const text = (subject + "\n" + body).replace(/\s+/g,' ');
 
-  if(STOP_PATTERNS.some(rx=>rx.test(text))) return false;
-  if(!/(receipt|transaction|debited|credited|payment|spent|paid|txn)/i.test(text)) return false;
+  // 1) skip obvious non-transactions
+  if (STOP_PATTERNS.some(rx => rx.test(text))) return false;
 
-  const a=amt(text); if(!a||a<=0) return false;
+  // 2) try strong issuer-specific parsers first
+  const cardHit = parseCardAlert(text);
+  if (cardHit && cardHit.amount > 0) {
+    const tx = {
+      id: msg.id,
+      date,
+      amount: cardHit.amount,
+      type: cardHit.type,
+      merchant: cardHit.merchant || (from.replace(/<.*?>/g,'') || "Unknown"),
+      card: cardHit.card || detectCard(text),
+      category: categorize({ merchant: cardHit.merchant, raw: text }),
+      source: "gmail",
+      raw: text
+    };
+    applyUserMappings(tx);
+    const fp = makeFingerprint(tx);
+    if (fpSeen.has(fp)) return false;
+    saveFp(fp);
+    state.tx.push(tx);
+    return true;
+  }
 
-  const type=detectType(text);
-  let merchant=(detectMerchant(text)||from.replace(/<.*?>/g,'')||"Unknown").trim();
-  let card=detectCard(text);
-  const category=categorize({merchant,raw:text});
+  // 3) fallback generic detection (old behavior)
+  if (!/(receipt|transaction|debited|credited|payment|spent|paid|txn)/i.test(text)) return false;
+  const a = amt(text); if (!a || a <= 0) return false;
 
-  const tx={ id:msg.id, date, amount:a, type, merchant, card, category, source:"gmail", raw:text };
+  const type = detectType(text);
+  let merchant = (detectMerchant(text) || from.replace(/<.*?>/g,'') || "Unknown").trim();
+  let card = detectCard(text);
+  const category = categorize({ merchant, raw: text });
 
-  // user mappings & standardization
+  const tx = { id: msg.id, date, amount:a, type, merchant, card, category, source:"gmail", raw:text };
   applyUserMappings(tx);
 
-  // dedupe
-  const fp=makeFingerprint(tx);
-  if(fpSeen.has(fp)) return false;
+  const fp = makeFingerprint(tx);
+  if (fpSeen.has(fp)) return false;
   saveFp(fp);
 
   state.tx.push(tx);
   return true;
 }
+
 
 // ---------- RENDER & CHARTS ----------
 const kpiTotal=$("#kpi-total"), kpiCount=$("#kpi-count"),
