@@ -14,6 +14,44 @@ function log(s) {
   if (statusEl) statusEl.textContent = s;
 }
 
+// ---- Dedupe + filters ----
+const STOP_PATTERNS = [
+  /otp/i,
+  /one\s*time\s*password/i,
+  /declined|failed|failure|not\s*approved/i,
+  /reversed|reversal|charge\s*reversal|chargeback/i,
+  /generated mail with reference/i,
+  /inform you that/i,
+  /test\s*transaction/i,
+  /autopay setup|mandate\s*(registered|cancelled)/i
+];
+
+// 10-minute bucket for dedupe window
+const DEDUPE_WINDOW_MS = 10 * 60 * 1000;
+
+// Keep track of Gmail message IDs we've already processed this session
+const processedMsgIds = new Set();
+
+// Persisted fingerprints to avoid duplicates across rescans
+const fpSeen = new Set(JSON.parse(localStorage.getItem("fpSeen") || "[]"));
+
+function saveFp(fp) {
+  fpSeen.add(fp);
+  // keep the stored set size under control
+  const arr = [...fpSeen];
+  if (arr.length > 5000) arr.splice(0, arr.length - 5000);
+  localStorage.setItem("fpSeen", JSON.stringify(arr));
+}
+
+// Build a stable fingerprint for a transaction
+function makeFingerprint(tx) {
+  const bucket = Math.floor(tx.date / DEDUPE_WINDOW_MS);                // time bucket
+  const amt = Math.round(Number(tx.amount));                            // rupees precision
+  const card = (tx.card || "unk").toString().slice(-6);                 // last digits/brand
+  const merch = (tx.merchant || "unk").toLowerCase().replace(/\s+/g," ").slice(0,24);
+  return `${bucket}|${amt}|${card}|${merch}`;
+}
+
 // Views
 const views = ["dashboard","transactions","insights","logs","settings"];
 $$(".nav").forEach(b => b.addEventListener("click", () => {
@@ -183,7 +221,8 @@ $("#btn-scan").addEventListener("click", () => scanGmail().catch(e => log("Scan 
 
 async function scanGmail() {
   state.tx.length = 0; renderAll();
-  const q = `newer_than:365d (subject:(receipt OR transaction OR debited OR credited OR payment OR spent) OR from:(${BANKS.map(x=>'@'+x).join(' ')}))`;
+  const exclude = '-subject:(otp OR "one time password" OR declined OR failure OR failed OR reversal)';
+  const q = `newer_than:365d ${exclude} (subject:(receipt OR transaction OR debited OR credited OR payment OR spent OR txn) OR from:(${BANKS.map(x=>'@'+x).join(' ')}))`;
   await scanQuery(q, 200);
   if (state.tx.length === 0) log("No results. Try CSV import.");
   renderAll();
@@ -240,69 +279,75 @@ function getBody(m) {
   return m.snippet || "";
 }
 
-function amt(text) {
-  const m = text.match(/(?:INR|Rs\.?|₹)\s*([0-9][0-9,]*(?:\.[0-9]{1,2})?)/i);
-  if (!m) return null; return parseFloat(m[1].replace(/,/g,''));
-}
 function detectType(text) {
-  const t = text.toLowerCase();
-  if (
-    /(credited|credit of|refund|reversal|cashback|received|payment received|amount received)/i.test(t)
-  ) return "credit";
-  if (
-    /(debited|debit of|purchase|spent|withdrawn|payment made|transaction of|charged)/i.test(t)
-  ) return "debit";
-  return "debit"; // default fallback
+  if (/(credited|refund(ed)?|cashback|reversal)/i.test(text)) return "credit";
+  if (/(debited|spent|purchase|payment\s+made|txn\s*[:# ]?\s*approved)/i.test(text)) return "debit";
+  return "debit"; // default bias
 }
 
-function detectMerchant(text){ const m=text.match(/(?:at|to|via|merchant[:\s])\s*([A-Z0-9 &._-]{2,40})/i); return m?m[1].trim():null; }
-function detectCard(text){ const t=text.match(/(?:xx|ending|card)\s*[:#-]?\s*([0-9]{3,6}|[0-9]{4})/i); if(t) return t[1]; const b=(text.match(/(Visa|Mastercard|Amex|Rupay|RuPay|Discover)/i)||[])[1]; return b||null; }
-function categorize(t){ const x=((t.merchant||"")+" "+(t.raw||" ")).toLowerCase();
-  if(/swiggy|zomato|pizza|restaurant|kfc|mcdonald|domino/.test(x)) return "Food";
-  if(/uber|ola|irctc|air|indigo|train|flight|fuel|petrol|bus/.test(x)) return "Travel";
-  if(/amazon|flipkart|myntra|ajio|store|mall|shop|fashion/.test(x)) return "Shopping";
-  if(/electric|power|water|gas|broadband|internet|mobile bill|postpaid|prepaid/.test(x)) return "Utilities";
-  if(/netflix|prime|spotify|subscription|invoice/.test(x)) return "Subscriptions";
-  if(/upi|transfer|neft|imps/.test(x)) return "Transfers"; return "Other";
-}
-function processMsg(msg){
-  const h=msg.payload?.headers||[];
-  const from=hVal(h,"From"), sub=hVal(h,"Subject"), date=new Date(hVal(h,"Date")).getTime()||Date.now();
-  const body=getBody(msg);
-  const text=(sub+"\n"+body).replace(/\s+/g,' ');
-  if(!/(receipt|transaction|debited|credited|payment|spent|paid|txn)/i.test(text)) return false;
-  const a=amt(text); if(!a||a<=0) return false;
-  if (state.tx.some(x => Math.abs(x.amount - a) < 0.1 && Math.abs(x.date - date) < 10000)) {
-  log("Duplicate suppressed");
-  return false;
+function detectMerchant(text) {
+  // Try common “at … / towards … / at merchant …” shapes
+  const m =
+    text.match(/(?:at|towards|merchant\s*[:\-])\s*([A-Z0-9& ._\-]{2,50})/i) ||
+    text.match(/(?:at\s+([A-Z][A-Z0-9& ._\-]{2,50}))\s+on\s+\d{1,2}\s\w{3}/i);
+  if (m) return m[1].trim();
+  // fallbacks
+  const rx = /(amazon|flipkart|myntra|swiggy|zomato|ola|uber|irctc|indigo|jio\s*mart|paytm|phonepe)/i;
+  const g = text.match(rx);
+  return g ? g[1].toUpperCase() : null;
 }
 
-  const type=detectType(text);
-  const merch=detectMerchant(text)||from.replace(/<.*?>/g,'');
-  const card=detectCard(text);
-  state.tx.push({id:msg.id,date,amount:a,type,merchant:merch,card,category:categorize({merchant:merch,raw:text}),source:"gmail",raw:text});
+function processMsg(msg) {
+  if (processedMsgIds.has(msg.id)) return false;              // already handled in this run
+  processedMsgIds.add(msg.id);
+
+  const h = msg.payload?.headers || [];
+  const from = hVal(h, "From");
+  const subject = hVal(h, "Subject") || "";
+  const date = new Date(hVal(h, "Date")).getTime() || Date.now();
+
+  // Extract text (subject + body)
+  const body = getBody(msg);
+  const text = (subject + "\n" + body).replace(/\s+/g, " ");
+
+  // 1) Skip obvious non-transactions
+  if (STOP_PATTERNS.some(rx => rx.test(text))) return false;
+
+  // Must look like a transaction
+  if (!/(receipt|transaction|debited|credited|payment|spent|paid|txn)/i.test(text)) return false;
+
+  // 2) Amount
+  const a = amt(text);
+  if (!a || a <= 0) return false;
+
+  // 3) Type, merchant, card, category
+  const type = detectType(text);
+  const merch = (detectMerchant(text) || from.replace(/<.*?>/g, "") || "Unknown").trim();
+  const card = detectCard(text);
+  const category = categorize({ merchant: merch, raw: text });
+
+  // 4) Build potential transaction
+  const tx = {
+    id: msg.id,
+    date,
+    amount: a,
+    type,
+    merchant: merch,
+    card,
+    category,
+    source: "gmail",
+    raw: text
+  };
+
+  // 5) Fingerprint-based dedupe (amount+card+merchant+time-bucket)
+  const fp = makeFingerprint(tx);
+  if (fpSeen.has(fp)) return false;     // duplicate of a previously stored txn
+  saveFp(fp);
+
+  state.tx.push(tx);
   return true;
 }
 
-// KPIs + tables + charts
-const kpiTotal=$("#kpi-total"), kpiCount=$("#kpi-count"), kpiCard=$("#kpi-card"),
-      kpiMerch=$("#kpi-merchants"), kpiBills=$("#kpi-bills");
-const txTable=$("#txTable"), txTable2=$("#txTable2");
-
-function fTx(){
-  const from=fromEl.value?new Date(fromEl.value).getTime():-Infinity;
-  const to=toEl.value?new Date(toEl.value).getTime()+86400000-1:Infinity;
-  const t=typeEl.value; const card=(cardEl.value||"").toLowerCase();
-  const cat=catEl.value; const q=(qEl.value||"").toLowerCase();
-  return state.tx.filter(x=>{
-    if(x.date<from||x.date>to) return false;
-    if(t!=='all'&&x.type!==t) return false;
-    if(cat!=='all'&&(x.category||'Other')!==cat) return false;
-    if(card&&!(String(x.card||'').toLowerCase().includes(card))) return false;
-    if(q && !((x.merchant||'').toLowerCase().includes(q)||(x.card||'').toLowerCase().includes(q)||(x.category||'').toLowerCase().includes(q))) return false;
-    return true;
-  });
-}
 
 function renderAll(){
   const tx=fTx().sort((a,b)=>b.date-a.date);
