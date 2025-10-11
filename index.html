@@ -1,99 +1,168 @@
 <!doctype html>
 <html lang="en">
 <head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>ExpensePro v7 — Gmail + CSV/XLSX</title>
-<link rel="manifest" href="manifest.json">
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css?v=7">
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1"></script>
-<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>ExpensePro v7 — Gmail + CSV/XLSX</title>
+
+  <link rel="manifest" href="manifest.json" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css?v=7" />
+
+  <!-- Charts + XLSX -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 </head>
 <body>
-<aside class="sidebar">
-  <div class="brand">💸 ExpensePro <span class="tag">v7</span></div>
-  <nav>
-    <button class="nav active" data-view="dashboard">Dashboard</button>
-    <button class="nav" data-view="transactions">Transactions</button>
-    <button class="nav" data-view="insights">Insights</button>
-    <button class="nav" data-view="logs">Logs</button>
-    <button class="nav" data-view="settings">Settings</button>
-  </nav>
-</aside>
-<main class="content">
-  <header class="topbar">
-    <input id="search" class="search" placeholder="Search merchants/cards/categories…">
-    <div>
-      <button id="btn-connect" class="btn primary">Connect Gmail</button>
-      <button id="btn-scan" class="btn" disabled>Scan Gmail</button>
-      <label class="btn file"><input id="fileInput" type="file" accept=".csv,.xlsx,.xls">Import CSV/XLSX</label>
-      <button id="btn-export" class="btn ghost">Export CSV</button>
-      <span id="status" class="status">Ready</span>
-    </div>
-  </header>
+  <aside class="sidebar">
+    <div class="brand">💸 ExpensePro <span class="tag">v7</span></div>
+    <nav>
+      <button class="nav active" data-view="dashboard">Dashboard</button>
+      <button class="nav" data-view="transactions">Transactions</button>
+      <button class="nav" data-view="insights">Insights</button>
+      <button class="nav" data-view="logs">Logs</button>
+      <button class="nav" data-view="settings">Settings</button>
+    </nav>
+  </aside>
 
-  <section class="card filters">
-    <div class="row">
-      <div><label>From</label><input type="date" id="fromDate"></div>
-      <div><label>To</label><input type="date" id="toDate"></div>
-      <div><label>Type</label><select id="typeFilter"><option value="all">All</option><option value="debit">Debits</option><option value="credit">Credits</option></select></div>
-      <div><label>Card</label><input id="cardFilter" placeholder="Last 4 / brand"></div>
-      <div><label>Category</label><select id="catFilter"><option value="all">All</option><option>Food</option><option>Travel</option><option>Shopping</option><option>Utilities</option><option>Subscriptions</option><option>Transfers</option><option>Other</option></select></div>
-      <div class="grow"></div>
-      <button id="apply" class="btn">Apply</button>
-      <button id="clear" class="btn ghost">Clear</button>
-    </div>
-  </section>
-
-  <section id="view-dashboard" class="view show">
-    <section class="grid kpis">
-      <div class="card kpi"><div class="kpi-title">Total Expenses</div><div id="kpi-total" class="kpi-value">₹ 0.00</div><div id="kpi-count" class="kpi-sub">0 tx</div></div>
-      <div class="card kpi"><div class="kpi-title">By Card</div><div id="kpi-card" class="mono small">—</div></div>
-      <div class="card kpi"><div class="kpi-title">Top Merchants</div><div id="kpi-merchants" class="small">—</div></div>
-      <div class="card kpi"><div class="kpi-title">Upcoming Bills</div><div id="kpi-bills" class="small">—</div></div>
-    </section>
-    <section class="grid charts">
-      <div class="card"><div class="card-title">Monthly Spend (12 mo)</div><canvas id="cMonthly" height="140"></canvas></div>
-      <div class="card"><div class="card-title">Spend by Card</div><canvas id="cByCard" height="140"></canvas></div>
-      <div class="card"><div class="card-title">Cumulative Spend</div><canvas id="cCumulative" height="140"></canvas></div>
-    </section>
-    <section class="card">
-      <div class="card-title">Transactions (latest 200)</div>
-      <div class="table-wrap"><table class="table"><thead><tr><th>Date</th><th>Amount</th><th>Type</th><th>Merchant</th><th>Card</th><th>Category</th><th>Source</th></tr></thead><tbody id="txTable"></tbody></table></div>
-    </section>
-  </section>
-
-  <section id="view-transactions" class="view">
-    <div class="card">
-      <div class="card-title">All Transactions</div>
-      <div class="table-wrap"><table class="table"><thead><tr><th>Date</th><th>Amount</th><th>Type</th><th>Merchant</th><th>Card</th><th>Category</th><th>Tags</th><th>Note</th></tr></thead><tbody id="txTable2"></tbody></table></div>
-    </div>
-  </section>
-
-  <section id="view-insights" class="view">
-    <section class="grid charts">
-      <div class="card"><div class="card-title">Category Mix</div><canvas id="cCategory" height="140"></canvas></div>
-      <div class="card"><div class="card-title">Weekday Spend</div><canvas id="cWeekday" height="140"></canvas></div>
-      <div class="card"><div class="card-title">Top Merchants</div><canvas id="cTopMerch" height="140"></canvas></div>
-    </section>
-  </section>
-
-  <section id="view-logs" class="view">
-    <div class="card"><div class="card-title">Notes & Logs</div><pre id="logs" class="logs"></pre></div>
-  </section>
-
-  <section id="view-settings" class="view">
-    <div class="card">
-      <div class="card-title">Settings</div>
-      <div class="row">
-        <div class="block"><h4>Encryption</h4><input id="passphrase" type="password" placeholder="Passphrase (optional)"></div>
-        <div class="block"><h4>Offline</h4><button id="btn-sw" class="btn">Register SW</button></div>
+  <main class="content">
+    <header class="topbar">
+      <input id="search" class="search" placeholder="Search merchants/cards/categories…" />
+      <div>
+        <!-- FIXED: id changed to btnConnect -->
+        <button id="btnConnect" class="btn primary">Connect Gmail</button>
+        <button id="btn-scan" class="btn" disabled>Scan Gmail</button>
+        <label class="btn file">
+          <input id="fileInput" type="file" accept=".csv,.xlsx,.xls" />
+          Import CSV/XLSX
+        </label>
+        <button id="btn-export" class="btn ghost">Export CSV</button>
+        <span id="status" class="status">Ready</span>
       </div>
-    </div>
-  </section>
-</main>
+    </header>
 
-<script src="https://accounts.google.com/gsi/client" async defer></script>
-<script>window.263109576837-3iphn0jaf34739hdltpoaeccjlmf1p4j.apps.googleusercontent.com="263109576837-3iphn0jaf34739hdltpoaeccjlmf1p4j.apps.googleusercontent.com";</script>
-<script type="module" src="script.js?v=7"></script>
-</body></html>
+    <section class="card filters">
+      <div class="row">
+        <div><label>From</label><input type="date" id="fromDate" /></div>
+        <div><label>To</label><input type="date" id="toDate" /></div>
+        <div>
+          <label>Type</label>
+          <select id="typeFilter">
+            <option value="all">All</option>
+            <option value="debit">Debits</option>
+            <option value="credit">Credits (refunds)</option>
+          </select>
+        </div>
+        <div><label>Card</label><input id="cardFilter" placeholder="Last 4 / brand" /></div>
+        <div>
+          <label>Category</label>
+          <select id="catFilter">
+            <option value="all">All</option>
+            <option>Food</option><option>Travel</option><option>Shopping</option>
+            <option>Utilities</option><option>Subscriptions</option>
+            <option>Transfers</option><option>Other</option>
+          </select>
+        </div>
+        <div class="grow"></div>
+        <button id="apply" class="btn">Apply</button>
+        <button id="clear" class="btn ghost">Clear</button>
+      </div>
+    </section>
+
+    <!-- DASHBOARD -->
+    <section id="view-dashboard" class="view show">
+      <section class="grid kpis">
+        <div class="card kpi">
+          <div class="kpi-title">Total Expenses</div>
+          <div id="kpi-total" class="kpi-value">₹ 0.00</div>
+          <div id="kpi-count" class="kpi-sub">0 tx</div>
+        </div>
+        <div class="card kpi">
+          <div class="kpi-title">By Card</div>
+          <div id="kpi-card" class="mono small">—</div>
+        </div>
+        <div class="card kpi">
+          <div class="kpi-title">Top Merchants</div>
+          <div id="kpi-merchants" class="small">—</div>
+        </div>
+        <div class="card kpi">
+          <div class="kpi-title">Upcoming Bills</div>
+          <div id="kpi-bills" class="small">—</div>
+        </div>
+      </section>
+
+      <section class="grid charts">
+        <div class="card"><div class="card-title">Monthly Spend (12 mo)</div><canvas id="cMonthly" height="140"></canvas></div>
+        <div class="card"><div class="card-title">Spend by Card</div><canvas id="cByCard" height="140"></canvas></div>
+        <div class="card"><div class="card-title">Cumulative Spend</div><canvas id="cCumulative" height="140"></canvas></div>
+      </section>
+
+      <section class="card">
+        <div class="card-title">Transactions (latest 200)</div>
+        <div class="table-wrap">
+          <table class="table">
+            <thead>
+              <tr><th>Date</th><th>Amount</th><th>Type</th><th>Merchant</th><th>Card</th><th>Category</th><th>Source</th></tr>
+            </thead>
+            <tbody id="txTable"></tbody>
+          </table>
+        </div>
+      </section>
+    </section>
+
+    <!-- TRANSACTIONS -->
+    <section id="view-transactions" class="view">
+      <div class="card">
+        <div class="card-title">All Transactions</div>
+        <div class="table-wrap">
+          <table class="table">
+            <thead>
+              <tr><th>Date</th><th>Amount</th><th>Type</th><th>Merchant</th><th>Card</th><th>Category</th><th>Tags</th><th>Note</th></tr>
+            </thead>
+            <tbody id="txTable2"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- INSIGHTS -->
+    <section id="view-insights" class="view">
+      <section class="grid charts">
+        <div class="card"><div class="card-title">Category Mix</div><canvas id="cCategory" height="140"></canvas></div>
+        <div class="card"><div class="card-title">Weekday Spend</div><canvas id="cWeekday" height="140"></canvas></div>
+        <div class="card"><div class="card-title">Top Merchants</div><canvas id="cTopMerch" height="140"></canvas></div>
+      </section>
+    </section>
+
+    <!-- LOGS -->
+    <section id="view-logs" class="view">
+      <div class="card">
+        <div class="card-title">Notes & Logs</div>
+        <pre id="logs" class="logs"></pre>
+      </div>
+    </section>
+
+    <!-- SETTINGS -->
+    <section id="view-settings" class="view">
+      <div class="card">
+        <div class="card-title">Settings</div>
+        <div class="row">
+          <div class="block"><h4>Encryption</h4><input id="passphrase" type="password" placeholder="Passphrase (optional)" /></div>
+          <div class="block"><h4>Offline</h4><button id="btn-sw" class="btn">Register SW</button></div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- Google Identity Services -->
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+
+  <!-- FIXED: valid global name for your Client ID -->
+  <script>
+    window.GOOGLE_CLIENT_ID = "263109576837-3iphn0jaf34739hdltpoaeccjlmf1p4j.apps.googleusercontent.com";
+  </script>
+
+  <!-- App script -->
+  <script type="module" src="script.js?v=7"></script>
+</body>
+</html>
