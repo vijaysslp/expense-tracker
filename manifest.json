@@ -1,6 +1,6 @@
 {
-  "name": "Expense Analyzer \u2014 Pro",
-  "short_name": "Expense Pro",
+  "name": "ExpensePro v7 \u2014 Gmail + CSV/XLSX",
+  "short_name": "ExpensePro",
   "start_url": "./",
   "display": "standalone",
   "background_color": "#0b0f14",
