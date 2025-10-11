@@ -154,15 +154,17 @@
     </section>
   </main>
 
+   <!-- … all your page markup above … -->
+
   <!-- Google Identity Services -->
   <script src="https://accounts.google.com/gsi/client" async defer></script>
 
-  <!-- FIXED: valid global name for your Client ID -->
+  <!-- Your OAuth Web Client ID from Google Cloud -->
   <script>
     window.GOOGLE_CLIENT_ID = "263109576837-3iphn0jaf34739hdltpoaeccjlmf1p4j.apps.googleusercontent.com";
   </script>
 
-  <!-- App script -->
+  <!-- Your app logic (must come after the two scripts above) -->
   <script type="module" src="script.js?v=7"></script>
 </body>
 </html>
