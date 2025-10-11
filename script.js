@@ -189,24 +189,36 @@ async function scanGmail() {
   renderAll();
 }
 
+// Prevent processing the same Gmail message twice
+const seenMsgs = new Set();
+
 async function scanQuery(q, limit) {
-  let next = undefined, processed = 0; const seen = new Set();
+  let next = undefined, processed = 0;
   try {
     do {
-      const params = { q, maxResults: 100 }; if (next) params.pageToken = next;
+      const params = { q, maxResults: 100 };
+      if (next) params.pageToken = next;
+
       const list = await gfetch("users/me/messages", params);
       next = list.nextPageToken;
       const msgs = list.messages || [];
+
       for (const m of msgs) {
         if (processed >= limit) break;
-        if (seen.has(m.id)) continue; seen.add(m.id);
+        if (seenMsgs.has(m.id)) continue; // ✅ skip duplicates
+        seenMsgs.add(m.id);
+
         const full = await gfetch(`users/me/messages/${m.id}`, { format: "full" });
         if (processMsg(full)) processed++;
       }
     } while (next && processed < limit);
-    log(`Processed: ${processed}, total tx: ${state.tx.length}`);
-  } catch (e) { log("Scan failed: " + (e.message || e)); }
+
+    log(`Processed ${processed} messages — ${state.tx.length} unique transactions`);
+  } catch (e) {
+    log("Scan failed: " + (e.message || e));
+  }
 }
+
 
 function hVal(h, n) { return (h || []).find(x => x.name?.toLowerCase() === n.toLowerCase())?.value || ""; }
 
@@ -232,7 +244,17 @@ function amt(text) {
   const m = text.match(/(?:INR|Rs\.?|₹)\s*([0-9][0-9,]*(?:\.[0-9]{1,2})?)/i);
   if (!m) return null; return parseFloat(m[1].replace(/,/g,''));
 }
-function detectType(text){ if(/credited|refund|reversal|cashback/i.test(text)) return "credit"; return "debit"; }
+function detectType(text) {
+  const t = text.toLowerCase();
+  if (
+    /(credited|credit of|refund|reversal|cashback|received|payment received|amount received)/i.test(t)
+  ) return "credit";
+  if (
+    /(debited|debit of|purchase|spent|withdrawn|payment made|transaction of|charged)/i.test(t)
+  ) return "debit";
+  return "debit"; // default fallback
+}
+
 function detectMerchant(text){ const m=text.match(/(?:at|to|via|merchant[:\s])\s*([A-Z0-9 &._-]{2,40})/i); return m?m[1].trim():null; }
 function detectCard(text){ const t=text.match(/(?:xx|ending|card)\s*[:#-]?\s*([0-9]{3,6}|[0-9]{4})/i); if(t) return t[1]; const b=(text.match(/(Visa|Mastercard|Amex|Rupay|RuPay|Discover)/i)||[])[1]; return b||null; }
 function categorize(t){ const x=((t.merchant||"")+" "+(t.raw||" ")).toLowerCase();
@@ -250,6 +272,11 @@ function processMsg(msg){
   const text=(sub+"\n"+body).replace(/\s+/g,' ');
   if(!/(receipt|transaction|debited|credited|payment|spent|paid|txn)/i.test(text)) return false;
   const a=amt(text); if(!a||a<=0) return false;
+  if (state.tx.some(x => Math.abs(x.amount - a) < 0.1 && Math.abs(x.date - date) < 10000)) {
+  log("Duplicate suppressed");
+  return false;
+}
+
   const type=detectType(text);
   const merch=detectMerchant(text)||from.replace(/<.*?>/g,'');
   const card=detectCard(text);
